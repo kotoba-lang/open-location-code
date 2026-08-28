@@ -1,0 +1,354 @@
+;; Copyright 2026 Open Location Code authors.
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+;;
+;; Open Location Code (Plus Code) for Kotoba.
+;;
+;; kotoba CLI v0.7.2 wasm32 uses an i64-only value profile (no IEEE floats).
+;; Coordinates are microdegrees (i64): 1 unit = 1e-6 degree. Plus Codes are
+;; two little-endian i64 words of ASCII (word 0 = chars 0-7, word 1 = chars
+;; 8-15; unused bytes are 0). Kotoba cannot FFI, so encode/decode stay in
+;; this file.
+;;
+;; Public API:
+;;   (encode-word lat-udeg lng-udeg code-len word-ix) -> i64
+;;   (encode-char lat-udeg lng-udeg code-len pos) -> i64 ASCII
+;;   (decode-lat-lo w0 w1) (decode-lng-lo w0 w1)
+;;   (decode-lat-hi w0 w1) (decode-lng-hi w0 w1)
+;;   (decode-len w0 w1)
+;;
+;; `main` runs vendored encode fixtures and returns 0 on success.
+;; Decode fixtures are driven from run_wasm.mjs on a fresh instance
+;; (wasm fuel is per-instance; encode+decode together overflow it).
+
+(ns openlocationcode
+  (:export [main encode-word encode-char decode-lat-lo decode-lng-lo decode-lat-hi decode-lng-hi decode-len]))
+
+(defn alph [idx :i64] :i64
+  (if (< idx 8) (+ 50 idx)
+    (if (= idx 8) 67
+      (if (= idx 9) 70
+        (if (= idx 10) 71
+          (if (= idx 11) 72
+            (if (= idx 12) 74
+              (if (= idx 13) 77
+                (if (= idx 14) 80
+                  (if (= idx 15) 81
+                    (if (= idx 16) 82
+                      (if (= idx 17) 86
+                        (if (= idx 18) 87 88)))))))))))))
+
+(defn p256 [p :i64] :i64
+  (if (< p 1) 1
+    (if (< p 2) 256
+      (if (< p 3) 65536
+        (if (< p 4) 16777216
+          (if (< p 5) 4294967296
+            (if (< p 6) 1099511627776
+              (if (< p 7) 281474976710656
+                72057594037927936))))))))
+
+(defn encode-word [lat-udeg :i64 lng-udeg :i64 code-len :i64 word-ix :i64] :i64
+  (loop [i 16
+         lat lat-udeg
+         lng lng-udeg
+         acc word-ix
+         packed code-len]
+    (if (= i 16)
+      (let [n (if (<= packed 0) 10
+                (if (and (< packed 10) (= (- packed (* (quot packed 2) 2)) 1))
+                  (+ packed 1)
+                  (if (> packed 15) 15 packed)))
+            wix acc]
+        (let [latu (if (> lat 90000000) 90000000 (if (< lat -90000000) -90000000 lat))
+              latv (+ (* latu 25) 2250000000)
+              lat2 (if (< latv 0) 0 (if (>= latv 4500000000) 4499999999 latv))
+              num (* lng 8192)]
+          (let [lq (quot num 1000)
+                lr (- num (* lq 1000))
+                lsigned (if (and (< lng 0) (not= lr 0)) (- lq 1) lq)
+                raw (+ lsigned 1474560000)]
+            (let [period 2949120000
+                  lng2 (if (<= raw 0)
+                         (+ (- raw (* (quot raw period) period)) period)
+                         (if (>= raw period)
+                           (- raw (* (quot raw period) period))
+                           raw))
+                  lat3 (if (> n 10) lat2 (quot lat2 3125))
+                  lng3 (if (> n 10) lng2 (quot lng2 1024))
+                  acc2 (if (= wix 1) 43 0)]
+              (recur (if (> n 10) 15 10) lat3 lng3 acc2 (+ (* n 2) wix))))))
+      (if (< i 0)
+        acc
+        (if (> i 10)
+          (let [n (quot packed 2)
+                wix (- packed (* n 2))
+                last (if (>= n 8) n 8)
+                ld0 (- lat (* (quot lat 5) 5))]
+            (let [ld (if (< ld0 0) (+ ld0 5) ld0)
+                  gd0 (- lng (* (quot lng 4) 4))
+                  gd (if (< gd0 0) (+ gd0 4) gd0)
+                  keep (if (and (= wix 1) (<= i last)) 1 0)]
+              (let [acc2 (if (= keep 0) acc (+ acc (* (alph (+ (* ld 4) gd)) (p256 (- i 8)))))]
+                (recur (- i 1) (quot lat 5) (quot lng 4) acc2 packed))))
+          (if (= i 8)
+            (recur 7 lat lng acc packed)
+            (let [n (quot packed 2)
+                  wix (- packed (* n 2))
+                  last (if (>= n 8) n 8)
+                  odd (if (= (- i (* (quot i 2) 2)) 1) 1 0)]
+              (let [use-lng (if (= i 10) 1 (if (and (= odd 1) (< i 8)) 1 0))
+                    coord (if (= use-lng 1) lng lat)
+                    r0 (- coord (* (quot coord 20) 20))
+                    idx (if (< r0 0) (+ r0 20) r0)]
+                (let [pad (if (and (< n 8) (>= i n) (<= i 7)) 1 0)
+                      wpos (if (< i 8) i (- i 8))
+                      inw (if (< i 8) (if (= wix 0) 1 0) (if (= wix 1) 1 0))
+                      keep (if (and (= inw 1) (<= i last)) 1 0)]
+                  (let [ch (if (= keep 0) 0 (if (= pad 1) 48 (alph idx)))
+                        acc2 (if (= keep 0) acc (+ acc (* ch (p256 wpos))))
+                        lat2 (if (= use-lng 1) lat (quot lat 20))
+                        lng2 (if (= use-lng 1) (quot lng 20) lng)]
+                    (recur (- i 1) lat2 lng2 acc2 packed)))))))))))
+
+(defn word-byte [word :i64 p :i64] :i64
+  (let [mul (p256 p)
+        q (quot word mul)
+        r (- q (* (quot q 256) 256))]
+    (if (< r 0) (+ r 256) r)))
+
+(defn encode-char [lat-udeg :i64 lng-udeg :i64 code-len :i64 pos :i64] :i64
+  (let [w (if (< pos 8) 0 1)
+        word (encode-word lat-udeg lng-udeg code-len w)
+        p (if (< pos 8) pos (- pos 8))]
+    (word-byte word p)))
+
+(defn stripped-len [w0 :i64 w1 :i64] :i64
+  (loop [p 0 n 0]
+    (if (>= p 16)
+      n
+      (let [word (if (< p 8) w0 w1)
+            pp (if (< p 8) p (- p 8))
+            mul (if (< pp 1) 1
+                  (if (< pp 2) 256
+                    (if (< pp 3) 65536
+                      (if (< pp 4) 16777216
+                        (if (< pp 5) 4294967296
+                          (if (< pp 6) 1099511627776
+                            (if (< pp 7) 281474976710656
+                              72057594037927936)))))))]
+        (let [q (quot word mul)
+              r (- q (* (quot q 256) 256))
+              c (if (< r 0) (+ r 256) r)]
+          (if (or (= c 0) (= c 43) (= c 48))
+            (recur (+ p 1) n)
+            (recur (+ p 1) (+ n 1))))))))
+
+(defn digit-ix [w0 :i64 w1 :i64 k :i64 n :i64] :i64
+  (let [raw (if (< n 8) k (if (< k 8) k (+ k 1)))
+        word (if (< raw 8) w0 w1)
+        pp (if (< raw 8) raw (- raw 8))]
+    (let [mul (if (< pp 1) 1
+                (if (< pp 2) 256
+                  (if (< pp 3) 65536
+                    (if (< pp 4) 16777216
+                      (if (< pp 5) 4294967296
+                        (if (< pp 6) 1099511627776
+                          (if (< pp 7) 281474976710656
+                            72057594037927936)))))))]
+      (let [q (quot word mul)
+            r (- q (* (quot q 256) 256))
+            c (if (< r 0) (+ r 256) r)]
+        (if (< c 50) -1
+          (if (< c 58) (- c 50)
+            (if (= c 67) 8
+              (if (= c 70) 9
+                (if (= c 71) 10
+                  (if (= c 72) 11
+                    (if (= c 74) 12
+                      (if (= c 77) 13
+                        (if (= c 80) 14
+                          (if (= c 81) 15
+                            (if (= c 82) 16
+                              (if (= c 86) 17
+                                (if (= c 87) 18
+                                  (if (= c 88) 19 -1))))))))))))))))))
+
+(defn floor-div [num :i64 den :i64] :i64
+  (let [q (quot num den)
+        r (- num (* q den))]
+    (if (and (< num 0) (not= r 0)) (- q 1) q)))
+
+(defn decode-lat-val [w0 :i64 w1 :i64 n :i64] :i64
+  (loop [step 0 val 0]
+    (if (>= step 10)
+      val
+      (let [pair (if (< step 5) 1 0)
+            i (if (< step 5) (* step 2) (+ step 5))
+            base (if (= pair 1) 20 5)]
+        (if (< i n)
+          (let [ix (digit-ix w0 w1 i n)
+                add (if (= pair 1) ix (quot ix 4))]
+            (recur (+ step 1) (+ (* val base) add)))
+          (recur (+ step 1) (* val base)))))))
+
+(defn decode-lng-val [w0 :i64 w1 :i64 n :i64] :i64
+  (loop [step 0 val 0]
+    (if (>= step 10)
+      val
+      (let [pair (if (< step 5) 1 0)
+            i (if (< step 5) (* step 2) (+ step 5))
+            base (if (= pair 1) 20 4)]
+        (if (< i n)
+          (let [k (if (= pair 1) (+ i 1) i)
+                ix (digit-ix w0 w1 k n)
+                add (if (= pair 1) ix (- ix (* (quot ix 4) 4)))]
+            (recur (+ step 1) (+ (* val base) add)))
+          (recur (+ step 1) (* val base)))))))
+
+(defn unused-height [n :i64 is-lat :i64] :i64
+  (let [up (if (>= n 10) 0 (- 5 (quot (+ n 1) 2)))
+        ug (if (> n 10) (- 15 n) 5)
+        gb (if (= is-lat 1) 5 4)]
+    (loop [e (+ up ug) acc 1]
+      (if (<= e 0)
+        acc
+        (let [b (if (> e ug) 20 gb)]
+          (recur (- e 1) (* acc b)))))))
+
+(defn decode-lat-lo [w0 :i64 w1 :i64] :i64
+  (floor-div (- (decode-lat-val w0 w1 (stripped-len w0 w1)) 2250000000) 25))
+
+(defn decode-lng-lo [w0 :i64 w1 :i64] :i64
+  (floor-div (* (- (decode-lng-val w0 w1 (stripped-len w0 w1)) 1474560000) 125) 1024))
+
+(defn decode-lat-hi [w0 :i64 w1 :i64] :i64
+  (let [n (stripped-len w0 w1)]
+    (+ (floor-div (- (decode-lat-val w0 w1 n) 2250000000) 25)
+       (floor-div (unused-height n 1) 25))))
+
+(defn decode-lng-hi [w0 :i64 w1 :i64] :i64
+  (let [n (stripped-len w0 w1)]
+    (+ (floor-div (* (- (decode-lng-val w0 w1 n) 1474560000) 125) 1024)
+       (floor-div (* (unused-height n 0) 125) 1024))))
+
+(defn decode-len [w0 :i64 w1 :i64] :i64
+  (stripped-len w0 w1))
+
+(defn fixture-encode [i :i64] :i64
+  (case i
+    0 (if (and (= (encode-word 20375000 2775000 6 0) 3472364618834724407)
+               (= (encode-word 20375000 2775000 6 1) 43)) 1 0)
+    1 (if (and (= (encode-word 500000 -179500000 4 0) 3472328296262742582)
+               (= (encode-word 500000 -179500000 4 1) 43)) 1 0)
+    2 (if (and (= (encode-word -89500000 -179500000 4 0) 3472328296261366322)
+               (= (encode-word -89500000 -179500000 4 1) 43)) 1 0)
+    3 (if (and (= (encode-word 20500000 2500000 4 0) 3472328296296302135)
+               (= (encode-word 20500000 2500000 4 1) 43)) 1 0)
+    4 (if (and (= (encode-word 1000000 1000000 11 0) 3617008641922057782)
+               (= (encode-word 1000000 1000000 11 1) 842150443)) 1 0)
+    5 (if (and (= (encode-word 90000000 1000000 4 0) 3472328296280639043)
+               (= (encode-word 90000000 1000000 4 1) 43)) 1 0)
+    6 (if (and (= (encode-word 92000000 1000000 4 0) 3472328296280639043)
+               (= (encode-word 92000000 1000000 4 1) 43)) 1 0)
+    7 (if (and (= (encode-word 90000000 1000000 10 0) 3627704854246868547)
+               (= (encode-word 90000000 1000000 10 1) 3299371)) 1 0)
+    8 (if (and (= (encode-word 1000000 180000000 4 0) 3472328296262808118)
+               (= (encode-word 1000000 180000000 4 1) 43)) 1 0)
+    9 (if (and (= (encode-word 1000000 181000000 4 0) 3472328296279585334)
+               (= (encode-word 1000000 181000000 4 1) 43)) 1 0)
+    10 (if (and (= (encode-word 1200000 3400000 10 0) 3617027350833153590)
+               (= (encode-word 1200000 3400000 10 1) 3289643)) 1 0)
+    11 (if (and (= (encode-word -70000000 163700000 8 0) 3617041627303007795)
+               (= (encode-word -70000000 163700000 8 1) 43)) 1 0)
+    12 (if (and (= (encode-word 40600000 129700000 8 0) 3617041730668810552)
+               (= (encode-word 40600000 129700000 8 1) 43)) 1 0)
+    13 (if (and (= (encode-word -14000000 106900000 6 0) 3472371185907552309)
+               (= (encode-word -14000000 106900000 6 1) 43)) 1 0)
+    14 (if (and (= (encode-word 17600000 -44400000 6 0) 3472356995753392183)
+               (= (encode-word 17600000 -44400000 6 1) 43)) 1 0)
+    15 (if (and (= (encode-word 37539669 -122375070 2 0) 3472328296227681336)
+               (= (encode-word 37539669 -122375070 2 1) 43)) 1 0)
+    0))
+
+(defn fixture-decode [i :i64] :i64
+  (case i
+    0 (if (and (= (decode-lat-lo 3472364618834724407 43) 20350000)
+               (= (decode-lng-lo 3472364618834724407 43) 2750000)
+               (= (decode-lat-hi 3472364618834724407 43) 20400000)
+               (= (decode-lng-hi 3472364618834724407 43) 2800000)
+               (= (decode-len 3472364618834724407 43) 6)) 1 0)
+    1 (if (and (= (decode-lat-lo 3617008642191410744 3289643) 47000000)
+               (= (decode-lng-lo 3617008642191410744 3289643) 8000000)
+               (= (decode-lat-hi 3617008642191410744 3289643) 47000125)
+               (= (decode-lng-hi 3617008642191410744 3289643) 8000125)
+               (= (decode-len 3617008642191410744 3289643) 10)) 1 0)
+    2 (if (and (= (decode-lat-lo 3472328296262742582 43) 0)
+               (= (decode-lng-lo 3472328296262742582 43) -180000000)
+               (= (decode-lat-hi 3472328296262742582 43) 1000000)
+               (= (decode-lng-hi 3472328296262742582 43) -179000000)
+               (= (decode-len 3472328296262742582 43) 4)) 1 0)
+    3 (if (and (= (decode-lat-lo 3472328296261366322 43) -90000000)
+               (= (decode-lng-lo 3472328296261366322 43) -180000000)
+               (= (decode-lat-hi 3472328296261366322 43) -89000000)
+               (= (decode-lng-hi 3472328296261366322 43) -179000000)
+               (= (decode-len 3472328296261366322 43) 4)) 1 0)
+    4 (if (and (= (decode-lat-lo 3472328296296302135 43) 20000000)
+               (= (decode-lng-lo 3472328296296302135 43) 2000000)
+               (= (decode-lat-hi 3472328296296302135 43) 21000000)
+               (= (decode-lng-hi 3472328296296302135 43) 3000000)
+               (= (decode-len 3472328296296302135 43) 4)) 1 0)
+    5 (if (and (= (decode-lat-lo 3472328296900286006 43) 0)
+               (= (decode-lng-lo 3472328296900286006 43) 179000000)
+               (= (decode-lat-hi 3472328296900286006 43) 1000000)
+               (= (decode-lng-hi 3472328296900286006 43) 180000000)
+               (= (decode-len 3472328296900286006 43) 4)) 1 0)
+    6 (if (and (= (decode-lat-lo 3617008641922057782 842150443) 1000000)
+               (= (decode-lng-lo 3617008641922057782 842150443) 1000000)
+               (= (decode-lat-hi 3617008641922057782 842150443) 1000025)
+               (= (decode-lng-hi 3617008641922057782 842150443) 1000031)
+               (= (decode-len 3617008641922057782 842150443) 11)) 1 0)
+    7 (if (and (= (decode-lat-lo 3472328296280639043 43) 89000000)
+               (= (decode-lng-lo 3472328296280639043 43) 1000000)
+               (= (decode-lat-hi 3472328296280639043 43) 90000000)
+               (= (decode-lng-hi 3472328296280639043 43) 2000000)
+               (= (decode-len 3472328296280639043 43) 4)) 1 0)
+    8 (if (and (= (decode-lat-lo 3472328296262808118 43) 1000000)
+               (= (decode-lng-lo 3472328296262808118 43) -180000000)
+               (= (decode-lat-hi 3472328296262808118 43) 2000000)
+               (= (decode-lng-hi 3472328296262808118 43) -179000000)
+               (= (decode-len 3472328296262808118 43) 4)) 1 0)
+    9 (if (and (= (decode-lat-lo 3472328296279585334 43) 1000000)
+               (= (decode-lng-lo 3472328296279585334 43) -179000000)
+               (= (decode-lat-hi 3472328296279585334 43) 2000000)
+               (= (decode-lng-hi 3472328296279585334 43) -178000000)
+               (= (decode-len 3472328296279585334 43) 4)) 1 0)
+    10 (if (and (= (decode-lat-lo 3627704854246868547 3299371) 89999875)
+                (= (decode-lng-lo 3627704854246868547 3299371) 1000000)
+                (= (decode-lat-hi 3627704854246868547 3299371) 90000000)
+                (= (decode-lng-hi 3627704854246868547 3299371) 1000125)
+                (= (decode-len 3627704854246868547 3299371) 10)) 1 0)
+    11 (if (and (= (decode-lat-lo 3472328296227681336 43) 30000000)
+                (= (decode-lng-lo 3472328296227681336 43) -140000000)
+                (= (decode-lat-hi 3472328296227681336 43) 50000000)
+                (= (decode-lng-hi 3472328296227681336 43) -120000000)
+                (= (decode-len 3472328296227681336 43) 2)) 1 0)
+    0))
+
+(defn main [] :i64
+  (loop [i 0]
+    (if (>= i 16)
+      0
+      (if (= (fixture-encode i) 0)
+        (+ i 1)
+        (recur (+ i 1))))))
