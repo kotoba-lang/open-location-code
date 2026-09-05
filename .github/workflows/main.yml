@@ -161,6 +161,30 @@ jobs:
           cd ${OLC_PATH} && ruby test/plus_codes_test.rb
           rubocop --config rubocop.yml
 
+  # Kotoba implementation. Lives in kotoba/. Compiles .kotoba to wasm with
+  # kotoba CLI v0.7.2 and runs vendored Plus Code fixtures.
+  test-kotoba:
+    runs-on: ubuntu-latest
+    env:
+      OLC_PATH: kotoba
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install kotoba CLI v0.7.2
+        run: |
+          curl -fsSL -o /tmp/kotoba-linux-amd64.tar.gz \
+            https://github.com/kotoba-lang/kotoba/releases/download/v0.7.2/kotoba-linux-amd64.tar.gz
+          echo "95e225461e1b8a21849b251e8c8b654693d2c8a516b258532771651e978e1977  /tmp/kotoba-linux-amd64.tar.gz" | sha256sum -c
+          mkdir -p /tmp/kotoba-cli
+          tar -xzf /tmp/kotoba-linux-amd64.tar.gz -C /tmp/kotoba-cli
+          sudo install -m 755 /tmp/kotoba-cli/kotoba /usr/local/bin/kotoba
+      - name: test
+        run: |
+          cd ${OLC_PATH}
+          bash checks.sh
+
   # Rust implementation. Lives in rust/.
   test-rust:
     runs-on: ubuntu-latest
