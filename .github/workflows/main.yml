@@ -1,5 +1,7 @@
 name: CI
 on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
 jobs:
   # C implementation. Lives in c/, tested with bazel.
   test-c:
@@ -8,6 +10,8 @@ jobs:
       OLC_PATH: c
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: bazelbuild/setup-bazelisk@b39c379c82683a5f25d34f0d062761f62693e0b2 # v3
       - name: test
         run: bazel test --test_output=all ${OLC_PATH}:all
@@ -23,6 +27,8 @@ jobs:
       OLC_PATH: c
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: bazelbuild/setup-bazelisk@b39c379c82683a5f25d34f0d062761f62693e0b2 # v3
       - name: test
         run: bazel test --test_output=all ${OLC_PATH}:all
@@ -34,6 +40,8 @@ jobs:
       OLC_PATH: cpp
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: bazelbuild/setup-bazelisk@b39c379c82683a5f25d34f0d062761f62693e0b2 # v3
       - name: test
         run: bazel test --test_output=all ${OLC_PATH}:all
@@ -47,6 +55,8 @@ jobs:
       OLC_PATH: dart
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
       - name: test
         run: |
@@ -61,6 +71,8 @@ jobs:
       OLC_PATH: go
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
       with:
         go-version: '1.23'
@@ -85,6 +97,8 @@ jobs:
     name: test-java-${{ matrix.java }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: bazelbuild/setup-bazelisk@b39c379c82683a5f25d34f0d062761f62693e0b2 # v3
       - name: Setup java
         uses: actions/setup-java@215b7e5f829ab9cac114c149667e57dc1b70b4bc # v2
@@ -101,6 +115,8 @@ jobs:
       OLC_PATH: js/closure
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: bazelbuild/setup-bazelisk@b39c379c82683a5f25d34f0d062761f62693e0b2 # v3
       - name: test
         run: |
@@ -114,6 +130,8 @@ jobs:
       OLC_PATH: js
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: test
         run: |
           cd ${OLC_PATH}
@@ -130,6 +148,8 @@ jobs:
     name: test-python-${{ matrix.python }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: bazelbuild/setup-bazelisk@b39c379c82683a5f25d34f0d062761f62693e0b2 # v3
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -151,6 +171,8 @@ jobs:
       OLC_PATH: ruby
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1
         with:
           ruby-version: '3.3.6'
@@ -169,6 +191,8 @@ jobs:
       OLC_PATH: kotoba
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
@@ -192,6 +216,8 @@ jobs:
       OLC_PATH: rust
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: test
         run: |
           cd ${OLC_PATH}
